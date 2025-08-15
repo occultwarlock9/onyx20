@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Onyx20 — Board + Dice Roller</title>
+<style>
+  :root { --cell: 64px; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px system-ui, sans-serif; background:#0f1115; color:#e6e6e6; }
+
+  header {
+    display:flex; align-items:center; gap:12px;
+    padding:10px 12px; border-bottom:1px solid #222;
+  }
+  .logo { padding-left:16px; }
+  .logo img { display:block; height:32px; }
+  .toolbar { display:flex; flex-wrap:wrap; gap:8px; margin-left:auto; }
+  .toolbar > * { background:#1a1d23; border:1px solid #2a2f3a; color:#e6e6e6; border-radius:6px; padding:6px 8px; }
+  input[type="file"] { display:none; }
+  .btn { cursor:pointer; }
+  .tiny { opacity:.7; font-size:12px; margin-left:8px; }
+  .row { display:flex; align-items:center; gap:8px; }
+
+  /* Main area: board + right sidebar */
+  #main {
+    display:flex; gap:12px; padding:12px;
+    align-items:flex-start; justify-content:center;
+  }
+
+  #board {
+    width: 960px; height: 640px; position:relative; overflow:hidden;
+    border:1px solid #2a2f3a; border-radius:10px; background:#16181d;
+  }
+  #world { position:absolute; left:0; top:0; transform-origin:0 0; }
+  .map-img { display:block; user-select:none; pointer-events:none; }
+
+  /* Tokens: constant size regardless of map zoom */
+  .token {
+    position:absolute; width: var(--cell); height: var(--cell);
+    transform: translate(-50%, -50%) scale(1);
+    transform-origin:center;
+    user-select:none; cursor:grab; overflow:hidden; border:none; border-radius:0;
+    background:transparent; box-shadow:0 2px 6px rgba(0,0,0,.35);
+  }
+  .token img { width:100%; height:100%; object-fit:cover; display:block; pointer-events:none; }
+  .token:active { cursor:grabbing; }
+  .badge {
+    background:rgba(0,0,0,.55); color:#fff; padding:2px 6px; border-radius:6px; font-size:12px;
+    position:absolute; bottom:4px; left:4px; right:4px; text-align:center; pointer-events:none;
+  }
+
+  /* Dice Roller Sidebar */
+  #sidebar {
+    width: 240px; min-width:240px;
+    border:1px solid #2a2f3a; border-radius:10px; background:#111318;
+    padding:12px; display:flex; flex-direction:column; gap:12px;
+  }
+  #sidebar h2 { margin:0; font-size:16px; font-weight:700; }
+  .dice-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .dice-btn {
+    padding:6px; border:1px solid #2a2f3a; border-radius:8px;
+    background:#1a1d23; color:#e6e6e6; font-weight:700; text-align:center; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .dice-btn:active { transform:translateY(1px); }
+  .dice-btn img { width:100%; height:auto; display:block; }
+  #log {
+    flex:1; overflow:auto; background:#0f1115; border:1px solid #2a2f3a; border-radius:8px; padding:8px;
+    font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; line-height:1.4;
+  }
+  .log-line { white-space:pre-wrap; margin:0 0 6px 0; }
+  .log-meta { opacity:.65; }
+
+  .side-actions { display:flex; gap:8px; }
+  .side-actions .btn { flex:1; text-align:center; }
+
+  @media (max-width: 1250px) {
+    #main { flex-direction:column; align-items:center; }
+    #sidebar { width:100%; max-width:960px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">
+    <img src="Onyx20_Logo.png" alt="Onyx20 Logo">
+  </div>
+  <div class="toolbar">
+    <button id="lockBtn" class="btn" title="Toggle map edit mode">Unlock Map</button>
+    <label class="btn" for="mapFile">Change Map</label><input id="mapFile" type="file" accept="image/*" />
+    <label class="btn" for="tokenFile">Upload Token</label><input id="tokenFile" type="file" accept="image/*" />
+    <div class="row">
+      Label <input id="label" type="text" value="PC" size="4" />
+    </div>
+    <button id="clear" class="btn">Clear Tokens</button>
+    <button id="reset" class="btn">Reset Board</button>
+    <span class="tiny">Auto-saves locally. Right-click a token to delete.</span>
+  </div>
+</header>
+
+<div id="main">
+  <div id="board">
+    <div id="world">
+      <img id="mapImg" class="map-img" alt="" />
+      <!-- tokens get appended here -->
+    </div>
+  </div>
+
+  <!-- Dice Roller Sidebar -->
+  <aside id="sidebar">
+    <h2>Dice</h2>
+    <div class="dice-grid">
+      <button class="dice-btn" data-sides="4"><img src="D4.png" alt="d4"></button>
+      <button class="dice-btn" data-sides="6"><img src="D6.png" alt="d6"></button>
+      <button class="dice-btn" data-sides="8"><img src="D8.png" alt="d8"></button>
+      <button class="dice-btn" data-sides="10"><img src="D10.png" alt="d10"></button>
+      <button class="dice-btn" data-sides="12"><img src="D12.png" alt="d12"></button>
+      <button class="dice-btn" data-sides="20"><img src="D20.png" alt="d20"></button>
+      <button class="dice-btn" data-sides="100"><img src="D100.png" alt="d100"></button>
+      <button class="dice-btn" id="clearLogBtn">clear</button>
+    </div>
+    <div id="log" aria-live="polite" aria-label="Dice roll log"></div>
+    <div class="side-actions">
+      <button class="btn" id="copyLogBtn">Copy Log</button>
+      <button class="btn" id="rollLastBtn" title="Re-roll the last die">Re-roll</button>
+    </div>
+  </aside>
+</div>
+
+<script>
+  // --- Board & Tokens ---
+  const board = document.getElementById('board');
+  const world = document.getElementById('world');
+  const mapImg = document.getElementById('mapImg');
+
+  const mapFile = document.getElementById('mapFile');
+  const tokenFile = document.getElementById('tokenFile');
+  const labelInput = document.getElementById('label');
+  const lockBtn = document.getElementById('lockBtn');
+  const clearBtn = document.getElementById('clear');
+  const resetBtn = document.getElementById('reset');
+
+  const STORAGE_KEY = 'onyx20_board_v3'; // unchanged
+
+  let scale = 1;
+  let tx = 0, ty = 0;
+  let mapLocked = true;
+
+  let mapW = 960, mapH = 640;
+
+  function applyTransform() {
+    world.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+    document.querySelectorAll('.token').forEach(t => {
+      t.style.transform = `translate(-50%, -50%) scale(${1/scale})`;
+    });
+  }
+
+  function setMap(url) {
+    if (!url) {
+      mapImg.removeAttribute('src');
+      mapW = board.clientWidth; mapH = board.clientHeight;
+      world.style.width = mapW + 'px';
+      world.style.height = mapH + 'px';
+      applyTransform();
+      return;
+    }
+    const img = new Image();
+    img.onload = () => {
+      mapW = img.naturalWidth;
+      mapH = img.naturalHeight;
+      mapImg.src = url;
+      mapImg.width = mapW;
+      mapImg.height = mapH;
+      world.style.width = mapW + 'px';
+      world.style.height = mapH + 'px';
+      applyTransform();
+    };
+    img.src = url;
+  }
+
+  function createImageToken({label, img}) {
+    const token = document.createElement('div');
+    token.className = 'token';
+    const image = document.createElement('img');
+    image.src = img;
+    token.appendChild(image);
+
+    if (label && label.trim()) {
+      const badge = document.createElement('div');
+      badge.className = 'badge';
+      badge.textContent = label.slice(0,6).toUpperCase();
+      token.appendChild(badge);
+    }
+
+    const left = Math.max(0, Math.min(mapW - 64, Math.round(Math.random()*(mapW-64))));
+    const top  = Math.max(0, Math.min(mapH - 64, Math.round(Math.random()*(mapH-64))));
+    token.style.left = left + 'px';
+    token.style.top  = top  + 'px';
+    token.style.transform = `translate(-50%, -50%) scale(${1/scale})`;
+
+    world.appendChild(token);
+    return token;
+  }
+
+  function snapshot() {
+    const tokens = [...world.querySelectorAll('.token')].map(t => ({
+      left: parseFloat(t.style.left||0),
+      top:  parseFloat(t.style.top||0),
+      img:  t.querySelector('img')?.src || '',
+      label: t.querySelector('.badge')?.textContent || ''
+    }));
+    return {
+      v:3,
+      mapSrc: mapImg.getAttribute('src') || '',
+      tokens,
+      view: { scale, tx, ty }
+    };
+  }
+
+  function save() {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot())); }
+    catch(e){ console.warn('Save failed', e); }
+  }
+
+  function load() {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    try {
+      const s = JSON.parse(raw);
+      if (s.mapSrc) setMap(s.mapSrc);
+      if (s.view) { scale = s.view.scale || 1; tx = s.view.tx || 0; ty = s.view.ty || 0; applyTransform(); }
+      (s.tokens||[]).forEach(t => {
+        const el = createImageToken({label:t.label, img:t.img});
+        el.style.left = (t.left||0) + 'px';
+        el.style.top  = (t.top||0) + 'px';
+      });
+    } catch(e){ console.warn('Load failed', e); }
+  }
+
+  // UI buttons
+  lockBtn.addEventListener('click', () => {
+    mapLocked = !mapLocked;
+    lockBtn.textContent = mapLocked ? 'Unlock Map' : 'Lock Map';
+  });
+
+  mapFile.addEventListener('change', e => {
+    const file = e.target.files?.[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { setMap(reader.result); save(); };
+    reader.readAsDataURL(file);
+  });
+
+  tokenFile.addEventListener('change', e => {
+    const file = e.target.files?.[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { createImageToken({label:labelInput.value, img:reader.result}); save(); tokenFile.value=''; };
+    reader.readAsDataURL(file);
+  });
+
+  clearBtn.addEventListener('click', () => { [...world.querySelectorAll('.token')].forEach(t => t.remove()); save(); });
+
+  resetBtn.addEventListener('click', () => {
+    localStorage.removeItem(STORAGE_KEY);
+    [...world.querySelectorAll('.token')].forEach(t => t.remove());
+    setMap('');
+    scale = 1; tx = 0; ty = 0; applyTransform();
+    save();
+  });
+
+  // Token dragging when locked
+  let tokenDrag = null;
+  world.addEventListener('pointerdown', e => {
+    const t = e.target.closest('.token');
+    if (!t || !mapLocked) return;
+
+    const startX = e.clientX, startY = e.clientY;
+    const startLeft = parseFloat(t.style.left||0);
+    const startTop  = parseFloat(t.style.top||0);
+    t.setPointerCapture(e.pointerId);
+    tokenDrag = { t, startX, startY, startLeft, startTop };
+  });
+
+  world.addEventListener('pointermove', e => {
+    if (!tokenDrag) return;
+    const dx = (e.clientX - tokenDrag.startX) / scale;
+    const dy = (e.clientY - tokenDrag.startY) / scale;
+    let left = tokenDrag.startLeft + dx;
+    let top  = tokenDrag.startTop  + dy;
+    left = Math.max(0, Math.min(left, mapW - tokenDrag.t.clientWidth));
+    top  = Math.max(0, Math.min(top,  mapH - tokenDrag.t.clientHeight));
+    tokenDrag.t.style.left = left + 'px';
+    tokenDrag.t.style.top  = top  + 'px';
+  });
+
+  window.addEventListener('pointerup', () => { if (tokenDrag) { tokenDrag = null; save(); } });
+
+  // Right-click delete single token
+  world.addEventListener('contextmenu', e => {
+    const t = e.target.closest('.token');
+    if (!t) return;
+    e.preventDefault();
+    t.remove();
+    save();
+  });
+
+  // Map panning when unlocked
+  let panDrag = null;
+  board.addEventListener('pointerdown', e => {
+    if (mapLocked) return;
+    if (e.target.closest('.token')) return;
+    const startX = e.clientX, startY = e.clientY;
+    panDrag = { startX, startY, startTx: tx, startTy: ty };
+    board.setPointerCapture?.(e.pointerId);
+  });
+
+  board.addEventListener('pointermove', e => {
+    if (!panDrag) return;
+    const dx = e.clientX - panDrag.startX;
+    const dy = e.clientY - panDrag.startY;
+    tx = panDrag.startTx + dx;
+    ty = panDrag.startTy + dy;
+    applyTransform();
+  });
+
+  window.addEventListener('pointerup', () => { if (panDrag) { panDrag = null; save(); } });
+
+  // Zoom when unlocked
+  board.addEventListener('wheel', e => {
+    if (mapLocked) return;
+    e.preventDefault();
+    const rect = board.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+
+    const old = scale;
+    const factor = Math.sign(e.deltaY) > 0 ? 0.9 : 1.1;
+    const next = Math.min(4, Math.max(0.25, old * factor));
+
+    const wx = (cx - tx) / old;
+    const wy = (cy - ty) / old;
+    scale = next;
+    tx = cx - wx * next;
+    ty = cy - wy * next;
+
+    applyTransform();
+    save();
+  }, { passive:false });
+
+  // --- Dice Roller (unchanged behavior) ---
+  const logEl = document.getElementById('log');
+  const clearLogBtn = document.getElementById('clearLogBtn');
+  const copyLogBtn = document.getElementById('copyLogBtn');
+  const rollLastBtn = document.getElementById('rollLastBtn');
+  let lastSides = null;
+
+  function d(sides) { return Math.floor(Math.random() * sides) + 1; }
+  function timestamp() {
+    const dt = new Date();
+    return dt.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  }
+  function appendLog(text) {
+    const line = document.createElement('div');
+    line.className = 'log-line';
+    line.innerHTML = `<span class="log-meta">[${timestamp()}]</span> ${text}`;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  document.querySelectorAll('.dice-btn[data-sides]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const sides = parseInt(btn.dataset.sides, 10);
+      lastSides = sides;
+      const roll = d(sides);
+      appendLog(`d${sides} → <strong>${roll}</strong>`);
+    });
+  });
+
+  clearLogBtn?.addEventListener('click', () => { logEl.innerHTML = ''; });
+  copyLogBtn?.addEventListener('click', async () => {
+    const text = [...logEl.querySelectorAll('.log-line')].map(el => el.textContent).join('\n');
+    try { await navigator.clipboard.writeText(text); } catch {}
+  });
+  rollLastBtn?.addEventListener('click', () => {
+    if (!lastSides) return;
+    const roll = d(lastSides);
+    appendLog(`d${lastSides} → <strong>${roll}</strong>`);
+  });
+
+  // init
+  setMap('');
+  load();
+  applyTransform();
+</script>
+</body>
+</html>
